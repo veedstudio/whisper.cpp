@@ -41,6 +41,8 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: "whisper, models/ggml-tiny.bin, ggml-base-q5_0.bin"
+          allowUpdates: true
+          replacesArtifacts: false
 
   macOS-latest:
     runs-on: macOS-latest
@@ -64,3 +66,5 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: "whisper_macos_arm64"
+          allowUpdates: true
+          replacesArtifacts: false
