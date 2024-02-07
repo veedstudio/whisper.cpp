@@ -60,12 +60,9 @@ jobs:
         run: |
           make
           make stream
-          mv main whisper
-          models/download-ggml-model.sh tiny
-          models/download-ggml-model.sh base
-          ./quantize models/ggml-base.bin ggml-base-q5_0.bin q5_0
+          mv main whisper_macos_arm64
 
       - name: Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "whisper, models/ggml-tiny.bin, ggml-base-q5_0.bin"
+          artifacts: "whisper_macos_arm64"
