@@ -1,6 +1,6 @@
 cmake_minimum_required (VERSION 3.5)
 
-project(whisper.cpp VERSION 1.4.2)
+project(whisper.cpp VERSION 1.5.4)
 
 # Add path to modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
@@ -218,11 +218,17 @@ if (WHISPER_CUBLAS)
         add_compile_definitions(GGML_USE_CUBLAS)
 
         if (WHISPER_STATIC)
-            set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas_static CUDA::cublasLt_static)
+            if (WIN32)
+                # As of 12.3.1 CUDA Tookit for Windows does not offer a static cublas library
+                set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas CUDA::cublasLt)
+            else ()
+                set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas_static CUDA::cublasLt_static)
+            endif()
         else()
             set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart CUDA::cublas CUDA::cublasLt)
         endif()
 
+        set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cuda_driver)
     else()
         message(FATAL_ERROR "cuBLAS not found")
     endif()
@@ -309,7 +315,8 @@ if (WHISPER_ALL_WARNINGS)
 endif()
 
 if (NOT MSVC)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=vla")
+    # TODO: temporary disabled until we figure out ggml-metal.m
+    #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=vla")
     #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-math-errno -ffinite-math-only -funsafe-math-optimizations")
 endif()
 
@@ -338,8 +345,8 @@ else()
         endif()
     else()
         if (EMSCRIPTEN)
-            set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -pthread")
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+            set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -pthread -s TOTAL_STACK=5242880")
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -s TOTAL_STACK=5242880")
         else()
             if(NOT WHISPER_NO_AVX)
                 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mavx")
@@ -464,6 +471,10 @@ add_library(${TARGET}
     ggml.c
     ggml-alloc.h
     ggml-alloc.c
+    ggml-backend.h
+    ggml-backend.c
+    ggml-quants.h
+    ggml-quants.c
     ${GGML_SOURCES_METAL}
     ${GGML_SOURCES_CUDA}
     ${GGML_SOURCES_OPENCL}
@@ -494,6 +505,7 @@ else()
 endif()
 
 if (BUILD_SHARED_LIBS)
+    set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(${TARGET} PUBLIC
         ${CMAKE_DL_LIBS}
         )
@@ -517,7 +529,13 @@ endif()
 
 if (GGML_SOURCES_CUDA)
     message(STATUS "GGML CUDA sources found, configuring CUDA architecture")
-    set_property(TARGET whisper PROPERTY CUDA_ARCHITECTURES OFF)
+    # Only configure gmml CUDA architectures is not globally set
+    if (NOT DEFINED GGML_CUDA_ARCHITECTURES)
+        # Not overriden by user, so set defaults
+        set(GGML_CUDA_ARCHITECTURES 52 61 70)
+    endif()
+    message(STATUS "GGML Configuring CUDA architectures ${GGML_CUDA_ARCHITECTURES}")
+    set_property(TARGET whisper PROPERTY CUDA_ARCHITECTURES ${GGML_CUDA_ARCHITECTURES})
     set_property(TARGET whisper PROPERTY CUDA_SELECT_NVCC_ARCH_FLAGS "Auto")
 endif()
 
@@ -529,7 +547,7 @@ target_compile_definitions(${TARGET} PUBLIC
     ${WHISPER_EXTRA_FLAGS}
     )
 
-set_target_properties(${TARGET} PROPERTIES PUBLIC_HEADER "whisper.h")
+set_target_properties(${TARGET} PROPERTIES PUBLIC_HEADER "ggml.h;whisper.h")
 
 include(GNUInstallDirs)
 
