@@ -41,3 +41,26 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: "whisper, models/ggml-tiny.bin, ggml-base-q5_0.bin"
+
+  macOS-latest:
+    runs-on: macOS-latest
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v3
+
+      - name: Dependencies
+        run: |
+          brew update
+          brew install sdl2
+
+      - name: Build
+        run: |
+          make
+          make stream
+          mv main whisper_macos_arm64
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "whisper_macos_arm64"
