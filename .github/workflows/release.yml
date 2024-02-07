@@ -3,8 +3,6 @@ on:
   push:
     tags:
       - "*"
-  pull_request:
-    types: [opened, synchronize, reopened]
 
 env:
   ubuntu_image: "ubuntu:22.04"
