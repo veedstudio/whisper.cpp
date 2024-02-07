@@ -44,8 +44,8 @@ jobs:
           allowUpdates: true
           replacesArtifacts: false
 
-  macOS-latest:
-    runs-on: macOS-latest
+  macos-14:
+    runs-on: macos-14
 
     steps:
       - name: Clone
@@ -60,11 +60,11 @@ jobs:
         run: |
           make
           make stream
-          mv main whisper_macos_arm64
+          mv main whisper_macos_m1
 
       - name: Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "whisper_macos_arm64"
+          artifacts: "whisper_macos_m1"
           allowUpdates: true
           replacesArtifacts: false
