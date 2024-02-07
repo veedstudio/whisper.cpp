@@ -62,8 +62,8 @@ struct whisper_params {
     int32_t progress_step =  5;
     int32_t max_context  = -1;
     int32_t max_len      =  0;
-    int32_t best_of      =  2;
-    int32_t beam_size    = -1;
+    int32_t best_of      = whisper_full_default_params(WHISPER_SAMPLING_GREEDY).greedy.best_of;
+    int32_t beam_size    = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH).beam_search.beam_size;
 
     float word_thold    =  0.01f;
     float entropy_thold =  2.40f;
@@ -83,12 +83,15 @@ struct whisper_params {
     bool output_wts      = false;
     bool output_csv      = false;
     bool output_jsn      = false;
+    bool output_jsn_full = false;
     bool output_lrc      = false;
+    bool no_prints       = false;
     bool print_special   = false;
     bool print_colors    = false;
     bool print_progress  = false;
     bool no_timestamps   = false;
     bool log_score       = false;
+    bool use_gpu         = true;
 
     std::string language  = "en";
     std::string prompt;
@@ -151,7 +154,9 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-fp"   || arg == "--font-path")       { params.font_path       = argv[++i]; }
         else if (arg == "-ocsv" || arg == "--output-csv")      { params.output_csv      = true; }
         else if (arg == "-oj"   || arg == "--output-json")     { params.output_jsn      = true; }
+        else if (arg == "-ojf"  || arg == "--output-json-full"){ params.output_jsn_full = params.output_jsn = true; }
         else if (arg == "-of"   || arg == "--output-file")     { params.fname_out.emplace_back(argv[++i]); }
+        else if (arg == "-np"   || arg == "--no-prints")       { params.no_prints       = true; }
         else if (arg == "-ps"   || arg == "--print-special")   { params.print_special   = true; }
         else if (arg == "-pc"   || arg == "--print-colors")    { params.print_colors    = true; }
         else if (arg == "-pp"   || arg == "--print-progress")  { params.print_progress  = true; }
@@ -162,7 +167,8 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-m"    || arg == "--model")           { params.model           = argv[++i]; }
         else if (arg == "-f"    || arg == "--file")            { params.fname_inp.emplace_back(argv[++i]); }
         else if (arg == "-oved" || arg == "--ov-e-device")     { params.openvino_encode_device = argv[++i]; }
-        else if (arg == "-ls"   || arg == "--log-score")       { params.log_score = true; }
+        else if (arg == "-ls"   || arg == "--log-score")       { params.log_score       = true; }
+        else if (arg == "-ng"   || arg == "--no-gpu")          { params.use_gpu         = false; }
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             whisper_print_usage(argc, argv, params);
@@ -206,7 +212,9 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -fp,       --font-path         [%-7s] path to a monospace font for karaoke video\n",     params.font_path.c_str());
     fprintf(stderr, "  -ocsv,     --output-csv        [%-7s] output result in a CSV file\n",                    params.output_csv ? "true" : "false");
     fprintf(stderr, "  -oj,       --output-json       [%-7s] output result in a JSON file\n",                   params.output_jsn ? "true" : "false");
+    fprintf(stderr, "  -ojf,      --output-json-full  [%-7s] include more information in the JSON file\n",      params.output_jsn_full ? "true" : "false");
     fprintf(stderr, "  -of FNAME, --output-file FNAME [%-7s] output file path (without file extension)\n",      "");
+    fprintf(stderr, "  -np,       --no-prints         [%-7s] do not print anything other than the results\n",   params.no_prints ? "true" : "false");
     fprintf(stderr, "  -ps,       --print-special     [%-7s] print special tokens\n",                           params.print_special ? "true" : "false");
     fprintf(stderr, "  -pc,       --print-colors      [%-7s] print colors\n",                                   params.print_colors ? "true" : "false");
     fprintf(stderr, "  -pp,       --print-progress    [%-7s] print progress\n",                                 params.print_progress ? "true" : "false");
@@ -218,6 +226,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -f FNAME,  --file FNAME        [%-7s] input WAV file path\n",                            "");
     fprintf(stderr, "  -oved D,   --ov-e-device DNAME [%-7s] the OpenVINO device used for encode inference\n",  params.openvino_encode_device.c_str());
     fprintf(stderr, "  -ls,       --log-score         [%-7s] log best decoder scores of tokens\n",              params.log_score?"true":"false");
+    fprintf(stderr, "  -ng,       --no-gpu            [%-7s] disable GPU\n",                                    params.use_gpu ? "false" : "true");
     fprintf(stderr, "\n");
 }
 
@@ -511,7 +520,12 @@ bool output_score(struct whisper_context * ctx, const char * fname, const whispe
     return true;
 }
 
-bool output_json(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
+bool output_json(
+             struct whisper_context * ctx,
+                         const char * fname,
+               const whisper_params & params,
+    std::vector<std::vector<float>>   pcmf32s,
+                               bool   full) {
     std::ofstream fout(fname);
     int indent = 0;
 
@@ -528,7 +542,7 @@ bool output_json(struct whisper_context * ctx, const char * fname, const whisper
     auto end_arr = [&](bool end) {
         indent--;
         doindent();
-        fout << (end ? "]\n" : "},\n");
+        fout << (end ? "]\n" : "],\n");
     };
 
     auto start_obj = [&](const char *name) {
@@ -569,10 +583,27 @@ bool output_json(struct whisper_context * ctx, const char * fname, const whisper
         end_value(end);
     };
 
+    auto value_f = [&](const char *name, const float val, bool end) {
+        start_value(name);
+        fout << val;
+        end_value(end);
+    };
+
     auto value_b = [&](const char *name, const bool val, bool end) {
         start_value(name);
         fout << (val ? "true" : "false");
         end_value(end);
+    };
+
+    auto times_o = [&](int64_t t0, int64_t t1, bool end) {
+        start_obj("timestamps");
+        value_s("from", to_timestamp(t0, true).c_str(), false);
+        value_s("to", to_timestamp(t1, true).c_str(), true);
+        end_obj(false);
+        start_obj("offsets");
+        value_i("from", t0 * 10, false);
+        value_i("to", t1 * 10, true);
+        end_obj(end);
     };
 
     if (!fout.is_open()) {
@@ -620,15 +651,26 @@ bool output_json(struct whisper_context * ctx, const char * fname, const whisper
                 const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
 
                 start_obj(nullptr);
-                    start_obj("timestamps");
-                        value_s("from", to_timestamp(t0, true).c_str(), false);
-                        value_s("to", to_timestamp(t1, true).c_str(), true);
-                    end_obj(false);
-                    start_obj("offsets");
-                        value_i("from", t0 * 10, false);
-                        value_i("to", t1 * 10, true);
-                    end_obj(false);
-                    value_s("text", text, !params.diarize && !params.tinydiarize);
+                    times_o(t0, t1, false);
+                    value_s("text", text, !params.diarize && !params.tinydiarize && !full);
+
+                    if (full) {
+                        start_arr("tokens");
+                        const int n = whisper_full_n_tokens(ctx, i);
+                        for (int j = 0; j < n; ++j) {
+                            auto token = whisper_full_get_token_data(ctx, i, j);
+                            start_obj(nullptr);
+                                value_s("text", whisper_token_to_str(ctx, token.id), false);
+                                if(token.t0 > -1 && token.t1 > -1) {
+                                    // If we have per-token timestamps, write them out
+                                    times_o(token.t0, token.t1, false);
+                                }
+                                value_i("id", token.id, false);
+                                value_f("p", token.p, true);
+                            end_obj(j == (n - 1));
+                        }
+                        end_arr(!params.diarize && !params.tinydiarize);
+                    }
 
                     if (params.diarize && pcmf32s.size() == 2) {
                         value_s("speaker", estimate_diarization_speaker(pcmf32s, t0, t1, true).c_str(), true);
@@ -813,6 +855,9 @@ bool output_lrc(struct whisper_context * ctx, const char * fname, const whisper_
     return true;
 }
 
+
+void cb_log_disable(enum ggml_log_level , const char * , void * ) { }
+
 int main(int argc, char ** argv) {
     whisper_params params;
 
@@ -839,9 +884,16 @@ int main(int argc, char ** argv) {
         exit(0);
     }
 
+    if (params.no_prints) {
+        whisper_log_set(cb_log_disable, NULL);
+    }
+
     // whisper init
 
-    struct whisper_context * ctx = whisper_init_from_file(params.model.c_str());
+    struct whisper_context_params cparams;
+    cparams.use_gpu = params.use_gpu;
+
+    struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
 
     if (ctx == nullptr) {
         fprintf(stderr, "error: failed to initialize whisper context\n");
@@ -863,29 +915,28 @@ int main(int argc, char ** argv) {
             continue;
         }
 
-        // print system information
-        {
+        if (!whisper_is_multilingual(ctx)) {
+            if (params.language != "en" || params.translate) {
+                params.language = "en";
+                params.translate = false;
+                fprintf(stderr, "%s: WARNING: model is not multilingual, ignoring language and translation options\n", __func__);
+            }
+        }
+        if (params.detect_language) {
+            params.language = "auto";
+        }
+
+        if (!params.no_prints) {
+            // print system information
             fprintf(stderr, "\n");
             fprintf(stderr, "system_info: n_threads = %d / %d | %s\n",
                     params.n_threads*params.n_processors, std::thread::hardware_concurrency(), whisper_print_system_info());
-        }
 
-        // print some info about the processing
-        {
+            // print some info about the processing
             fprintf(stderr, "\n");
-            if (!whisper_is_multilingual(ctx)) {
-                if (params.language != "en" || params.translate) {
-                    params.language = "en";
-                    params.translate = false;
-                    fprintf(stderr, "%s: WARNING: model is not multilingual, ignoring language and translation options\n", __func__);
-                }
-            }
-            if (params.detect_language) {
-                params.language = "auto";
-            }
-            fprintf(stderr, "%s: processing '%s' (%d samples, %.1f sec), %d threads, %d processors, lang = %s, task = %s, %stimestamps = %d ...\n",
+            fprintf(stderr, "%s: processing '%s' (%d samples, %.1f sec), %d threads, %d processors, %d beams + best of %d, lang = %s, task = %s, %stimestamps = %d ...\n",
                     __func__, fname_inp.c_str(), int(pcmf32.size()), float(pcmf32.size())/WHISPER_SAMPLE_RATE,
-                    params.n_threads, params.n_processors,
+                    params.n_threads, params.n_processors, params.beam_size, params.best_of,
                     params.language.c_str(),
                     params.translate ? "translate" : "transcribe",
                     params.tinydiarize ? "tdrz = 1, " : "",
@@ -912,7 +963,7 @@ int main(int argc, char ** argv) {
             wparams.offset_ms        = params.offset_t_ms;
             wparams.duration_ms      = params.duration_ms;
 
-            wparams.token_timestamps = params.output_wts || params.max_len > 0;
+            wparams.token_timestamps = params.output_wts || params.output_jsn_full || params.max_len > 0;
             wparams.thold_pt         = params.word_thold;
             wparams.max_len          = params.output_wts && params.max_len == 0 ? 60 : params.max_len;
             wparams.split_on_word    = params.split_on_word;
@@ -930,6 +981,8 @@ int main(int argc, char ** argv) {
             wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
             wparams.entropy_thold    = params.entropy_thold;
             wparams.logprob_thold    = params.logprob_thold;
+
+            wparams.no_timestamps    = params.no_timestamps;
 
             whisper_print_user_data user_data = { &params, &pcmf32s, 0 };
 
@@ -1012,7 +1065,7 @@ int main(int argc, char ** argv) {
             // output to JSON file
             if (params.output_jsn) {
                 const auto fname_jsn = fname_out + ".json";
-                output_json(ctx, fname_jsn.c_str(), params, pcmf32s);
+                output_json(ctx, fname_jsn.c_str(), params, pcmf32s, params.output_jsn_full);
             }
 
             // output to LRC file
