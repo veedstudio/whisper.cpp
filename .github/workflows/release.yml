@@ -3,6 +3,8 @@ on:
   push:
     tags:
       - "*"
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 env:
   ubuntu_image: "ubuntu:22.04"
@@ -38,6 +40,32 @@ jobs:
             '
 
       - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "whisper, models/ggml-tiny.bin, ggml-base-q5_0.bin"
+
+  macOS-latest:
+    runs-on: macOS-latest
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v3
+
+      - name: Dependencies
+        run: |
+          brew update
+          brew install sdl2
+
+      - name: Build
+        run: |
+          make
+          make stream
+          mv main whisper
+          models/download-ggml-model.sh tiny
+          models/download-ggml-model.sh base
+          ./quantize models/ggml-base.bin ggml-base-q5_0.bin q5_0
+
+       - name: Release
         uses: ncipollo/release-action@v1
         with:
           artifacts: "whisper, models/ggml-tiny.bin, ggml-base-q5_0.bin"
