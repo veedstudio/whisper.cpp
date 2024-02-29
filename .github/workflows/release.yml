@@ -5,7 +5,7 @@ on:
       - "*"
 
 env:
-  ubuntu_image: "ubuntu:22.04"
+  linux_image: "node:20-bullseye-slim"
 
 jobs:
   ubuntu-latest:
@@ -27,7 +27,7 @@ jobs:
         run: |
           docker run --platform ${{ matrix.arch }} --rm \
             -v ${{ github.workspace }}:/workspace \
-            -w /workspace ${{ env.ubuntu_image }} /bin/sh -c '
+            -w /workspace ${{ env.linux_image }} /bin/sh -c '
             apt update
             apt install -y build-essential libsdl2-dev wget
             make
